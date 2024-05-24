@@ -1,0 +1,259 @@
+Parameters:
+  DBName:
+    Type: String
+    Default: ProjectDB
+    Description: The name of the database to create in the RDS instance
+Resources:
+  ProjectPrivateSubnetGroup:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties:
+      DBSubnetGroupDescription: Subnet group for RDS instance
+      SubnetIds:
+        - subnet-08bc18671601a3554
+        - subnet-02b2ad910f859cd85
+      Tags:
+        - Key: Name
+          Value: ProjectPvtSubnetGroup
+  MyKeyPair:
+    Type: AWS::EC2::KeyPair
+    Properties:
+      KeyName: ProjectKeyPair
+  ProjectAMIServerSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security group for AMI
+      VpcId: vpc-01bc3cfcf98862cc8
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: 43.252.113.66/32
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+      Tags:
+        - Key: Name
+          Value: ProjectAMISeverSG
+  MyElasticIPEC2:
+    Type: AWS::EC2::EIP
+    Properties:
+      Domain: vpc
+  MyEC2Instance:
+    Type: AWS::EC2::Instance
+    Properties:
+      ImageId: ami-04ff98ccbfa41c9ad
+      InstanceType: t2.micro
+      KeyName: !Ref MyKeyPair
+      SecurityGroupIds:
+        - !Ref ProjectAMIServerSecurityGroup
+      SubnetId: subnet-0729832dc3f3374de
+      IamInstanceProfile: LabInstanceProfile
+      UserData: !Base64 |
+        #!/bin/bash
+        yum -y update
+        yum -y install php httpd mysql
+        PHP_VERSION=`php -v | head -n 1 | awk '{print $2}' | awk -F "." '{print $1}'`
+        while [ ${PHP_VERSION} -ne 7 ]
+        do
+        amazon-linux-extras install php7.4 -y
+        PHP_VERSION=`php -v | head -n 1 | awk '{print $2}' | awk -F "." '{print $1}'`
+        done
+        yum -y install php-mbstring php-xml
+        wget http://wordpress.org/latest.tar.gz -P /tmp/
+        tar zxvf /tmp/latest.tar.gz -C /tmp
+        cp -r /tmp/wordpress/* /var/www/html/
+        chown apache:apache -R /var/www/html
+        systemctl enable httpd.service
+        systemctl start httpd.service
+      Tags:
+        - Key: Name
+          Value: ProjectAMISever
+  MyEIPAssociation:
+    Type: AWS::EC2::EIPAssociation
+    Properties:
+      InstanceId: !Ref MyEC2Instance
+      EIP: !Ref MyElasticIPEC2
+  MyRDSSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security group for RDS instance allowing traffic from Web Server
+      VpcId: vpc-01bc3cfcf98862cc8
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 3306
+          ToPort: 3306
+          SourceSecurityGroupId: !Ref ProjectAMIServerSecurityGroup
+        - IpProtocol: tcp
+          FromPort: 3306
+          ToPort: 3306
+          SourceSecurityGroupId: !Ref MyLaunchTemplateSG
+      Tags:
+        - Key: Name
+          Value: ProjectRDSSG
+  MyDBInstance:
+    Type: AWS::RDS::DBInstance
+    Properties:
+      AllocatedStorage: '20'
+      DBInstanceClass: db.t3.micro
+      Engine: mysql
+      EngineVersion: 8.0.35
+      DBName: !Ref DBName
+      MasterUsername: admin
+      MasterUserPassword: AWSLiki,,33
+      DBSubnetGroupName: !Ref ProjectPrivateSubnetGroup
+      VPCSecurityGroups:
+        - !GetAtt MyRDSSecurityGroup.GroupId
+      PubliclyAccessible: false
+      MultiAZ: false # Multi-AZ will be enabled later from the console
+      BackupRetentionPeriod: 7
+      StorageType: gp2
+      AvailabilityZone: us-east-1a
+      Tags:
+        - Key: Name
+          Value: ProjectPrimaryRDS
+  MyReadReplica:
+    Type: AWS::RDS::DBInstance
+    Properties:
+      SourceDBInstanceIdentifier: !Ref MyDBInstance
+      DBInstanceClass: db.t3.micro
+      Engine: mysql
+      PubliclyAccessible: false
+      VPCSecurityGroups:
+        - !GetAtt MyRDSSecurityGroup.GroupId
+      AvailabilityZone: us-east-1b
+      Tags:
+        - Key: Name
+          Value: ProjectReadReplica
+  MyS3Bucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: my-project-bucket-223686897
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: false
+        BlockPublicPolicy: false
+        IgnorePublicAcls: false
+        RestrictPublicBuckets: false
+  ALBSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security group for the ALB
+      VpcId: vpc-01bc3cfcf98862cc8
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+      Tags:
+        - Key: Name
+          Value: ProjectALBSecurityGroup
+  MyApplicationLoadBalancer:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Name: MyApplicationLoadBalancer
+      Scheme: internet-facing
+      Subnets:
+        - subnet-0729832dc3f3374de
+        - subnet-0e286e3d13ed60865
+      SecurityGroups:
+        - !Ref ALBSecurityGroup
+      Tags:
+        - Key: Name
+          Value: ProjectALB
+  ALBListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref MyTargetGroup
+      LoadBalancerArn: !Ref MyApplicationLoadBalancer
+      Port: 80
+      Protocol: HTTP
+  MyTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      Name: ProjectTargetGroup
+      VpcId: vpc-01bc3cfcf98862cc8
+      Port: 80
+      Protocol: HTTP
+      TargetType: instance
+      HealthCheckIntervalSeconds: 30
+      HealthCheckPath: /
+      HealthCheckPort: '80'
+      HealthCheckProtocol: HTTP
+      HealthyThresholdCount: 5
+      UnhealthyThresholdCount: 2
+      Matcher:
+        HttpCode: '200'
+      Targets:
+        - Id: i-030a484e2048501ba
+      Tags:
+        - Key: Name
+          Value: ProjectTargetGroup
+  MyLaunchTemplate:
+    Type: AWS::EC2::LaunchTemplate
+    Properties:
+      LaunchTemplateName: MyProjectLaunchTemplate
+      LaunchTemplateData:
+        ImageId: ami-0fc73f67188be65c2
+        IamInstanceProfile:
+          Arn: arn:aws:iam::959238632352:instance-profile/LabInstanceProfile
+        InstanceType: t2.micro
+        KeyName: !Ref MyKeyPair
+        SecurityGroupIds:
+          - !Ref MyLaunchTemplateSG
+  MyLaunchTemplateSG:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security group for the Launch Template
+      VpcId: vpc-01bc3cfcf98862cc8
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 0
+          ToPort: 65535
+          SourceSecurityGroupId: !Ref ALBSecurityGroup
+      Tags:
+        - Key: Name
+          Value: ProjectLaunchTemplateSG
+  MyAutoScalingGroup:
+    Type: AWS::AutoScaling::AutoScalingGroup
+    Properties:
+      AutoScalingGroupName: MyProjectAutoScalingGroup
+      VPCZoneIdentifier:
+        - subnet-08bc18671601a3554
+        - subnet-02b2ad910f859cd85
+      LaunchTemplate:
+        LaunchTemplateId: !Ref MyLaunchTemplate
+        Version: !GetAtt MyLaunchTemplate.LatestVersionNumber
+      MinSize: '1'
+      MaxSize: '3'
+      DesiredCapacity: '1'
+      TargetGroupARNs:
+        - !Ref MyTargetGroup
+      Tags:
+        - Key: Name
+          Value: MyProjectAutoScalingGroup
+          PropagateAtLaunch: true
+  MyScaleOutPolicy:
+    Type: AWS::AutoScaling::ScalingPolicy
+    Properties:
+      AutoScalingGroupName: !Ref MyAutoScalingGroup
+      PolicyType: TargetTrackingScaling
+      TargetTrackingConfiguration:
+        PredefinedMetricSpecification:
+          PredefinedMetricType: ASGAverageCPUUtilization
+        TargetValue: 70
+  MyScaleInPolicy:
+    Type: AWS::AutoScaling::ScalingPolicy
+    Properties:
+      AutoScalingGroupName: !Ref MyAutoScalingGroup
+      PolicyType: TargetTrackingScaling
+      TargetTrackingConfiguration:
+        PredefinedMetricSpecification:
+          PredefinedMetricType: ASGAverageCPUUtilization
+        TargetValue: 25
+
+Outputs:
+  EC2InstancePublicDNS:
+    Description: Public DNS of the EC2 instance
+    Value: !GetAtt MyEC2Instance.PublicDnsName

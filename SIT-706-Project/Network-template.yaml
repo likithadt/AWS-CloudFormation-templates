@@ -1,0 +1,115 @@
+Resources:
+  myVPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.0.0.0/16
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      Tags:
+        - Key: Name
+          Value: Project-VPC
+  ProjectPublicSubnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref myVPC
+      CidrBlock: 10.0.0.0/24
+      AvailabilityZone: us-east-1a
+      Tags:
+        - Key: Name
+          Value: ProjectPUS1
+  ProjectPublicSubnet2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref myVPC
+      CidrBlock: 10.0.1.0/24
+      AvailabilityZone: us-east-1b
+      Tags:
+        - Key: Name
+          Value: ProjectPUS2
+  ProjectPrivateSubnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref myVPC
+      CidrBlock: 10.0.2.0/24
+      AvailabilityZone: us-east-1a
+      Tags:
+        - Key: Name
+          Value: ProjectPRS1
+  ProjectPrivateSubnet2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref myVPC
+      CidrBlock: 10.0.3.0/24
+      AvailabilityZone: us-east-1b
+      Tags:
+        - Key: Name
+          Value: ProjectPRS2
+  ProjectPublicRT:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref myVPC
+      Tags:
+        - Key: Name
+          Value: ProjectPUBRT
+  ProjectPrivateRT:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref myVPC
+      Tags:
+        - Key: Name
+          Value: ProjectPVTRT
+  SubnetRouteTableAssociation1:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref ProjectPublicSubnet1
+      RouteTableId: !Ref ProjectPublicRT
+  SubnetRouteTableAssociation2:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref ProjectPublicSubnet2
+      RouteTableId: !Ref ProjectPublicRT
+  SubnetRouteTableAssociation3:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref ProjectPrivateSubnet1
+      RouteTableId: !Ref ProjectPrivateRT
+  SubnetRouteTableAssociation4:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref ProjectPrivateSubnet2
+      RouteTableId: !Ref ProjectPrivateRT
+  eipNAT:
+    Type: AWS::EC2::EIP
+    Properties:
+      Domain: vpc
+  ProjectNatGateway:
+    Type: AWS::EC2::NatGateway
+    Properties:
+      AllocationId: !GetAtt eipNAT.AllocationId
+      SubnetId: !Ref ProjectPublicSubnet1
+      Tags:
+        - Key: Name
+          Value: ProjectNGW
+  ProjectInternetGateway:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: ProjectIGW
+  Route1:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref ProjectPublicRT
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref ProjectInternetGateway
+  Route2:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref ProjectPrivateRT
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref ProjectNatGateway
+  VPCGatewayAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref myVPC
+      InternetGatewayId: !Ref ProjectInternetGateway
